@@ -597,7 +597,8 @@
 						<!-- CALL BUTTONS -->
 						<button type="button" id="btnCall" class="btn">CALL</button>
 						<button type="button" id="btnHangup" class="btn danger" disabled>HANG UP</button>
-
+						<button type="button" id="btnAccept" class="btn hidden">ACCEPT</button>
+						<button type="button" id="btnDecline" class="btn danger hidden">DECLINE</button>
 						<button class="btn" type="submit">SEND</button>
 						<button id="btnDeleteChat" class="btn danger" type="button">DELETE CHAT</button>
 					</form>
@@ -898,9 +899,36 @@
 
 		const rtcConfig = {
 			iceServers: [
-				{ urls: "stun:stun.l.google.com:19302" }
+				{ urls: "stun:stun.l.google.com:19302" },
+				{
+					urls: [
+						"turn:terminal404.org:3478?transport=udp",
+						"turn:terminal404.org:3478?transport=tcp"
+					],
+					username: "terminal",
+					credential: "gogyX9ByiKXK"
+				}
 			]
 		};
+
+		const btnAccept = document.getElementById("btnAccept");
+		const btnDecline = document.getElementById("btnDecline");
+		let pendingOffer = null;
+		let pendingOfferRoom = "";
+
+		function showIncomingControls(show) {
+			btnAccept.classList.toggle("hidden", !show);
+			btnDecline.classList.toggle("hidden", !show);
+
+			// пока входящий — запретим CALL, но дадим DECLINE
+			if (show) {
+				btnCall.disabled = true;
+				btnHangup.disabled = true;
+			} else {
+				btnCall.disabled = !(!!currentRoom && !!socket) || isInCall;
+				btnHangup.disabled = !isInCall;
+			}
+		}
 
 		function setCallUi(inCall) {
 			isInCall = !!inCall;
@@ -1028,27 +1056,61 @@
 			socket.on("webrtc:offer", async ({ room, offer }) => {
 				if (!room || room !== currentRoom) return;
 
-				// auto-accept incoming call
+				// если уже в звонке — сразу отклоняем
+				if (isInCall || pendingOffer) {
+					socket.emit("webrtc:hangup", { room });
+					return;
+				}
+
+				pendingOffer = offer;
+				pendingOfferRoom = room;
+
+				sysLine("INFO", "incoming call... (press ACCEPT)");
+				showIncomingControls(true);
+			});
+
+			btnAccept.addEventListener("click", async () => {
+				if (!pendingOffer || !socket || !pendingOfferRoom) return;
+
 				try {
+					showIncomingControls(false);
 					setCallUi(true);
-					sysLine("INFO", "incoming call...");
 
 					await createPeerConnection();
 
 					localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 					localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-					await pc.setRemoteDescription(new RTCSessionDescription(offer));
+					await pc.setRemoteDescription(new RTCSessionDescription(pendingOffer));
+
 					const answer = await pc.createAnswer();
 					await pc.setLocalDescription(answer);
 
-					socket.emit("webrtc:answer", { room, answer });
+					socket.emit("webrtc:answer", { room: pendingOfferRoom, answer });
 
 					sysLine("INFO", "call connected");
 				} catch (e) {
-					sysLine("ERROR", "incoming call failed: " + (e?.message || "error"));
+					sysLine("ERROR", "accept failed: " + (e?.message || "error"));
 					await endCall({ remote: true, silent: true });
+				} finally {
+					pendingOffer = null;
+					pendingOfferRoom = "";
 				}
+			});
+
+			btnDecline.addEventListener("click", async () => {
+				if (!socket || !pendingOfferRoom) {
+					pendingOffer = null;
+					pendingOfferRoom = "";
+					showIncomingControls(false);
+					return;
+				}
+
+				socket.emit("webrtc:hangup", { room: pendingOfferRoom });
+				pendingOffer = null;
+				pendingOfferRoom = "";
+				showIncomingControls(false);
+				sysLine("INFO", "call declined");
 			});
 
 			socket.on("webrtc:answer", async ({ room, answer }) => {
@@ -1077,6 +1139,12 @@
 
 			socket.on("webrtc:hangup", async ({ room }) => {
 				if (room && room !== currentRoom) return;
+
+				// сбрасываем входящий
+				pendingOffer = null;
+				pendingOfferRoom = "";
+				showIncomingControls(false);
+
 				await endCall({ remote: true, silent: false });
 			});
 		}
