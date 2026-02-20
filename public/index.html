@@ -917,6 +917,13 @@
 				}
 			};
 
+			pc.onconnectionstatechange = () => {
+				sysLine("INFO", "rtc state: " + pc.connectionState);
+			};
+			pc.oniceconnectionstatechange = () => {
+				sysLine("INFO", "ice state: " + pc.iceConnectionState);
+			};
+
 			pc.ontrack = (event) => {
 				const stream = event.streams[0];
 				remoteAudio.srcObject = stream;
