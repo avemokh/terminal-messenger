@@ -607,6 +607,7 @@
 
 	</div>
 
+	<audio id="remoteAudio" autoplay playsinline></audio>
 	<script src="/socket.io/socket.io.js"></script>
 	<script>
 		let socket = null;
@@ -892,7 +893,7 @@
 		// ===== WEBRTC AUDIO CALL =====
 		let pc = null;
 		let localStream = null;
-		let remoteAudio = null;
+		const remoteAudio = document.getElementById("remoteAudio");
 		let isInCall = false;
 
 		const rtcConfig = {
@@ -918,12 +919,19 @@
 
 			pc.ontrack = (event) => {
 				const stream = event.streams[0];
-				if (!remoteAudio) {
-					remoteAudio = new Audio();
-					remoteAudio.autoplay = true;
-					remoteAudio.playsInline = true;
-				}
 				remoteAudio.srcObject = stream;
+
+				// try to force play (may be blocked without user gesture)
+				remoteAudio.play().catch(() => {
+					sysLine("WARN", "audio blocked by browser. click anywhere in page to allow sound.");
+					const once = () => {
+						remoteAudio.play().catch(() => { });
+						document.removeEventListener("click", once);
+						document.removeEventListener("keydown", once);
+					};
+					document.addEventListener("click", once);
+					document.addEventListener("keydown", once);
+				});
 			};
 		}
 
